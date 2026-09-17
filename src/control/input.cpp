@@ -826,6 +826,12 @@ void input::receive_control_events(const event &ev)
 
                 redraw();
             break;
+            case internal_event_type::execute_focused:
+                if (input_view_ != input_view::multiline && return_callback)
+                {
+                    return_callback();
+                }
+            break;
         }
     }
 }
