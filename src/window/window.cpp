@@ -1335,7 +1335,7 @@ void window::send_mouse_event(const mouse_event &ev)
 
     send_event_to_plains({ event_type::mouse, ev });
 
-    auto send_mouse_event_to_control = [this](std::shared_ptr<wui::i_control> &send_to_control,
+    auto send_mouse_event_to_control = [this](std::shared_ptr<wui::i_control> send_to_control,
         const mouse_event &ev_) noexcept -> void
     {
         if (active_control == send_to_control)
