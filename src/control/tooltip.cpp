@@ -136,6 +136,14 @@ void tooltip::show()
 
     showed_ = true;
 
+    /// Topmost controls are drawn in the order they were added, so anything
+    /// raised after the tooltip (a panel shown above the window) would cover it.
+    auto parent__ = parent_.lock();
+    if (parent__)
+    {
+        parent__->bring_to_front(shared_from_this());
+    }
+
     redraw();
 }
 
