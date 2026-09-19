@@ -42,6 +42,21 @@ public:
 
     rect max_size() const;
 
+    void set_clip(rect clip__)
+    {
+        clip_ = clip__;
+    }
+
+    void clear_clip()
+    {
+        clip_ = { 0, 0, 0, 0 };
+    }
+
+    rect clip() const
+    {
+        return clip_;
+    }
+
     void set_background_color(color background_color);
 
     void clear(rect position = { 0 });
@@ -95,6 +110,8 @@ private:
     rect max_size_;
 
     color background_color;
+
+    rect clip_{ 0, 0, 0, 0 };
 
 #ifdef _WIN32
     HDC mem_dc;

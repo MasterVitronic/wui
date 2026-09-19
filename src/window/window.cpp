@@ -374,6 +374,25 @@ system_context &window::context()
     }
 }
 
+void window::draw_control(graphic &gr, rect paint_rect, std::shared_ptr<i_control> &control)
+{
+    gr.set_clip(control->clip());
+    control->draw(gr, paint_rect);
+    gr.clear_clip();
+}
+
+bool window::control_contains(const std::shared_ptr<i_control> &control, int32_t x, int32_t y)
+{
+    if (!control->position().in(x, y))
+    {
+        return false;
+    }
+
+    const auto clip = control->clip();
+
+    return clip.is_null() || clip.in(x, y);
+}
+
 void window::draw(graphic &gr, rect paint_rect)
 {
     /// drawing the child window
@@ -426,7 +445,7 @@ void window::draw(graphic &gr, rect paint_rect)
         {
             if (!control->topmost())
             {
-                control->draw(gr, paint_rect);
+                draw_control(gr, paint_rect, control);
             }
             else
             {
@@ -437,7 +456,7 @@ void window::draw(graphic &gr, rect paint_rect)
 
     for (auto &control : topmost_controls)
     {
-        control->draw(gr, paint_rect);
+        draw_control(gr, paint_rect, control);
     }
 }
 
@@ -1329,7 +1348,7 @@ void window::send_mouse_event(mouse_event ev)
     ev.modifier = key_modifier;
 #endif
 
-    if (active_control && !active_control->position().in(ev.x, ev.y))
+    if (active_control && !control_contains(active_control, ev.x, ev.y))
     {
         mouse_event me{ mouse_event_type::leave, ev.x, ev.y };
         send_event_to_control(active_control, { event_type::mouse, me });
@@ -1392,7 +1411,7 @@ void window::send_mouse_event(mouse_event ev)
         auto end = controls.rend();
         for (auto control = controls.rbegin(); control != end; ++control)
         {
-            if (*control && (*control)->topmost() && (*control)->showed() && (*control)->position().in(ev.x, ev.y))
+            if (*control && (*control)->topmost() && (*control)->showed() && control_contains(*control, ev.x, ev.y))
             {
                 return send_mouse_event_to_control(*control, ev);
             }
@@ -1400,7 +1419,7 @@ void window::send_mouse_event(mouse_event ev)
 
         for (auto control = controls.rbegin(); control != end; ++control)
         {
-            if (*control && (*control)->showed() && (*control)->position().in(ev.x, ev.y))
+            if (*control && (*control)->showed() && control_contains(*control, ev.x, ev.y))
             {
                 return send_mouse_event_to_control(*control, ev);
             }
@@ -1410,7 +1429,7 @@ void window::send_mouse_event(mouse_event ev)
     {
         for (auto &control : controls)
         {
-            if (control && control->position().in(ev.x, ev.y) && control == docked_control)
+            if (control && control == docked_control && control_contains(control, ev.x, ev.y))
             {
                 return send_mouse_event_to_control(control, ev);
             }
@@ -1423,7 +1442,7 @@ bool window::check_control_here(int32_t x, int32_t y)
     for (auto &control : controls)
     {
         if (control->showed() &&
-            control->position().in(x, y) &&
+            control_contains(control, x, y) &&
             std::find_if(subscribers_.begin(), subscribers_.end(), [&control](const event_subscriber &es) { return es.control == control; }) != subscribers_.end())
         {
             return true;
@@ -2335,7 +2354,7 @@ LRESULT CALLBACK window::wnd_proc(HWND hwnd, UINT message, WPARAM w_param, LPARA
                 {
                     if (!control->topmost())
                     {
-                        control->draw(wnd->graphic_, paint_rect);
+                        wnd->draw_control(wnd->graphic_, paint_rect, control);
                     }
                     else
                     {
@@ -2346,7 +2365,7 @@ LRESULT CALLBACK window::wnd_proc(HWND hwnd, UINT message, WPARAM w_param, LPARA
 
             for (auto &control : topmost_controls)
             {
-                control->draw(wnd->graphic_, paint_rect);
+                wnd->draw_control(wnd->graphic_, paint_rect, control);
             }
 
             wnd->draw_border(wnd->graphic_);
@@ -2874,7 +2893,7 @@ void window::process_events(xcb_generic_event_t &e)
                 {
                     if (!control->topmost())
                     {
-                        control->draw(graphic_, paint_rect);
+                        draw_control(graphic_, paint_rect, control);
                     }
                     else
                     {
@@ -2885,7 +2904,7 @@ void window::process_events(xcb_generic_event_t &e)
 
             for (auto &control : topmost_controls)
             {
-                control->draw(graphic_, paint_rect);
+                draw_control(graphic_, paint_rect, control);
             }
 
             graphic_.flush(paint_rect);

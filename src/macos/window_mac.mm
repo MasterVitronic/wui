@@ -369,7 +369,7 @@ void macos_window_backend::paint(window& w,rect dirty,void *destination)
     auto controls=w.controls;
     for(bool topmost : {false,true}) for(auto& control:controls) {
         if(control && control->showed() && control->topmost()==topmost && control->position().in(dirty))
-            control->draw(w.graphic_,dirty);
+            w.draw_control(w.graphic_,dirty,control);
     }
     w.draw_border(w.graphic_);
     CGContextRestoreGState(ctx);

@@ -50,6 +50,154 @@ xcb_visualtype_t *default_visual_type(wui::system_context &context_)
 namespace wui
 {
 
+#ifdef _WIN32
+namespace
+{
+class dc_clip
+{
+public:
+    dc_clip(HDC dc_, const rect &clip_) : dc(dc_), saved(0)
+    {
+        if (clip_.is_null())
+        {
+            return;
+        }
+
+        saved = SaveDC(dc);
+        IntersectClipRect(dc, clip_.left, clip_.top, clip_.right, clip_.bottom);
+    }
+
+    ~dc_clip()
+    {
+        if (saved != 0)
+        {
+            RestoreDC(dc, saved);
+        }
+    }
+
+    dc_clip(const dc_clip &) = delete;
+    dc_clip &operator=(const dc_clip &) = delete;
+
+private:
+    HDC dc;
+    int saved;
+};
+}
+#elif __linux__
+namespace
+{
+void clip_cairo(cairo_t *cr, const rect &clip_)
+{
+    if (clip_.is_null())
+    {
+        return;
+    }
+
+    cairo_rectangle(cr, clip_.left, clip_.top, clip_.width(), clip_.height());
+    cairo_clip(cr);
+}
+
+bool clip_point(const rect &clip_, int32_t x, int32_t y)
+{
+    return clip_.is_null() || clip_.in(x, y);
+}
+
+bool clip_segment(const rect &clip_, int32_t &x1, int32_t &y1, int32_t &x2, int32_t &y2)
+{
+    if (clip_.is_null())
+    {
+        return true;
+    }
+
+    const auto dx = static_cast<double>(x2 - x1);
+    const auto dy = static_cast<double>(y2 - y1);
+    const double p[4] = { -dx, dx, -dy, dy };
+    const double q[4] = { static_cast<double>(x1 - clip_.left),
+        static_cast<double>(clip_.right - x1),
+        static_cast<double>(y1 - clip_.top),
+        static_cast<double>(clip_.bottom - y1) };
+
+    double t0 = 0.0, t1 = 1.0;
+
+    for (int32_t i = 0; i < 4; ++i)
+    {
+        if (p[i] == 0.0)
+        {
+            if (q[i] < 0.0)
+            {
+                return false;
+            }
+
+            continue;
+        }
+
+        const auto r = q[i] / p[i];
+
+        if (p[i] < 0.0)
+        {
+            if (r > t1)
+            {
+                return false;
+            }
+
+            if (r > t0)
+            {
+                t0 = r;
+            }
+        }
+        else
+        {
+            if (r < t0)
+            {
+                return false;
+            }
+
+            if (r < t1)
+            {
+                t1 = r;
+            }
+        }
+    }
+
+    const auto nx1 = x1 + t0 * dx;
+    const auto ny1 = y1 + t0 * dy;
+    const auto nx2 = x1 + t1 * dx;
+    const auto ny2 = y1 + t1 * dy;
+
+    x1 = static_cast<int32_t>(std::lround(nx1));
+    y1 = static_cast<int32_t>(std::lround(ny1));
+    x2 = static_cast<int32_t>(std::lround(nx2));
+    y2 = static_cast<int32_t>(std::lround(ny2));
+
+    return true;
+}
+
+bool clip_copy(const rect &clip_, rect &destination, int32_t &source_x, int32_t &source_y)
+{
+    if (clip_.is_null())
+    {
+        return true;
+    }
+
+    const int32_t left = std::max(destination.left, clip_.left);
+    const int32_t top = std::max(destination.top, clip_.top);
+    const int32_t right = std::min(destination.right, clip_.right);
+    const int32_t bottom = std::min(destination.bottom, clip_.bottom);
+
+    if (right <= left || bottom <= top)
+    {
+        return false;
+    }
+
+    source_x += left - destination.left;
+    source_y += top - destination.top;
+    destination = { left, top, right, bottom };
+
+    return true;
+}
+}
+#endif
+
 graphic::graphic(system_context &context__)
     : context_(context__),
       pc(context_),
@@ -276,8 +424,15 @@ void graphic::flush(rect updated_size)
 void graphic::draw_pixel(rect position, color color_)
 {
 #ifdef _WIN32
+    dc_clip clip(mem_dc, clip_);
+
     SetPixel(mem_dc, position.left, position.top, color_);
 #elif __linux__
+    if (!clip_point(clip_, position.left, position.top))
+    {
+        return;
+    }
+
     xcb_point_t points[] = { { static_cast<int16_t>(position.left), static_cast<int16_t>(position.top) } };
     xcb_poly_point(context_.connection, XCB_COORD_MODE_ORIGIN, mem_pixmap, pc.get_gc(color_), 1, points);
 #endif
@@ -286,6 +441,8 @@ void graphic::draw_pixel(rect position, color color_)
 void graphic::draw_line(rect position, color color_, uint32_t width)
 {
 #ifdef _WIN32
+    dc_clip clip(mem_dc, clip_);
+
     auto old_pen = (HPEN)SelectObject(mem_dc, pc.get_pen(PS_SOLID, width, color_));
 
     MoveToEx(mem_dc, position.left, position.top, (LPPOINT)NULL);
@@ -293,8 +450,15 @@ void graphic::draw_line(rect position, color color_, uint32_t width)
 
     SelectObject(mem_dc, old_pen);
 #elif __linux__
-    xcb_point_t polyline[] = { { static_cast<int16_t>(position.left), static_cast<int16_t>(position.top) },
-        { static_cast<int16_t>(position.right), static_cast<int16_t>(position.bottom) } };
+    auto x1 = position.left, y1 = position.top, x2 = position.right, y2 = position.bottom;
+
+    if (!clip_segment(clip_, x1, y1, x2, y2))
+    {
+        return;
+    }
+
+    xcb_point_t polyline[] = { { static_cast<int16_t>(x1), static_cast<int16_t>(y1) },
+        { static_cast<int16_t>(x2), static_cast<int16_t>(y2) } };
     xcb_poly_line(context_.connection, XCB_COORD_MODE_ORIGIN, mem_pixmap, pc.get_gc(color_), 2, polyline);
 #endif
 }
@@ -348,6 +512,8 @@ rect graphic::measure_text(std::string_view text_, const font &font__)
 void graphic::draw_text(rect position, std::string_view text_, color color_, const font &font__)
 {
 #ifdef _WIN32
+    dc_clip clip(mem_dc, clip_);
+
     auto old_font = (HFONT)SelectObject(mem_dc, pc.get_font(font__));
 
     SetTextColor(mem_dc, color_);
@@ -375,6 +541,9 @@ void graphic::draw_text(rect position, std::string_view text_, color color_, con
         return;
     }
 
+    cairo_save(cr);
+    clip_cairo(cr, clip_);
+
     cairo_set_source_rgb(cr,
         static_cast<double>(wui::get_red(color_)) / 255,
         static_cast<double>(wui::get_green(color_)) / 255,
@@ -386,12 +555,16 @@ void graphic::draw_text(rect position, std::string_view text_, color color_, con
     text__ += '\0';
 
     cairo_show_text(cr, text__.c_str());
+
+    cairo_restore(cr);
 #endif
 }
 
 void graphic::draw_rect(rect position, color fill_color)
 {
 #ifdef _WIN32
+    dc_clip clip(mem_dc, clip_);
+
     RECT position_rect = { position.left, position.top, position.right, position.bottom };
     FillRect(mem_dc, &position_rect, pc.get_brush(fill_color));
 #elif __linux__
@@ -411,6 +584,7 @@ void graphic::draw_rect(rect position, color fill_color)
     }
 
     auto cr = cairo_create(surface);
+    clip_cairo(cr, clip_);
 
     cairo_set_source_rgb(cr, static_cast<double>(wui::get_red(fill_color)) / 255,
         static_cast<double>(wui::get_green(fill_color)) / 255,
@@ -487,6 +661,8 @@ void DrawRoundBox(HDC dc,
 void graphic::draw_rect(rect position, color border_color, color fill_color, uint32_t border_width, uint32_t rnd)
 {
 #ifdef _WIN32
+    dc_clip clip(mem_dc, clip_);
+
     DrawRoundBox(mem_dc, position, rnd, border_width, fill_color, border_color);
 #elif __linux__
 
@@ -496,6 +672,7 @@ void graphic::draw_rect(rect position, color border_color, color fill_color, uin
     }
 
     auto cr = cairo_create(surface);
+    clip_cairo(cr, clip_);
 
     double l = position.left,
        t     = position.top,
@@ -564,6 +741,7 @@ void graphic::draw_image(std::string_view file_name, rect position)
     }
 
     auto *cr = cairo_create(surface);
+    clip_cairo(cr, clip_);
     const int width = cairo_image_surface_get_width(it->second);
     const int height = cairo_image_surface_get_height(it->second);
     if (width <= 0 || height <= 0)
@@ -588,6 +766,8 @@ void graphic::draw_image(std::string_view file_name, rect position)
 void graphic::draw_buffer(rect position, uint8_t *buffer, int32_t left_shift, int32_t top_shift)
 {
 #ifdef _WIN32
+    dc_clip clip(mem_dc, clip_);
+
     auto source_bitmap = pc.get_bitmap(position.width(), position.height(), buffer, mem_dc);
     auto source_dc = CreateCompatibleDC(mem_dc);
     SelectObject(source_dc, source_bitmap);
@@ -604,6 +784,14 @@ void graphic::draw_buffer(rect position, uint8_t *buffer, int32_t left_shift, in
 
     DeleteDC(source_dc);
 #elif __linux__
+    auto destination = rect{ position.left, position.top,
+        position.left + position.right, position.top + position.bottom };
+
+    if (!clip_copy(clip_, destination, left_shift, top_shift))
+    {
+        return;
+    }
+
     auto pixmap = xcb_generate_id(context_.connection);
     auto pixmap_cookie = xcb_create_pixmap(context_.connection,
         context_.screen->root_depth,
@@ -645,10 +833,10 @@ void graphic::draw_buffer(rect position, uint8_t *buffer, int32_t left_shift, in
         pc.get_gc(background_color),
         left_shift,
         top_shift,
-        position.left,
-        position.top,
-        position.right,
-        position.bottom);
+        destination.left,
+        destination.top,
+        destination.width(),
+        destination.height());
 
     xcb_free_pixmap(context_.connection, pixmap);
 
@@ -664,6 +852,8 @@ void graphic::draw_graphic(rect position, graphic &graphic_, int32_t left_shift,
 #ifdef _WIN32
     if (graphic_.drawable())
     {
+        dc_clip clip(mem_dc, clip_);
+
         BitBlt(mem_dc,
             position.left,
             position.top,
@@ -675,6 +865,14 @@ void graphic::draw_graphic(rect position, graphic &graphic_, int32_t left_shift,
             SRCCOPY);
     }
 #elif __linux__
+    auto destination = rect{ position.left, position.top,
+        position.left + position.right, position.top + position.bottom };
+
+    if (!clip_copy(clip_, destination, left_shift, top_shift))
+    {
+        return;
+    }
+
     if (graphic_.drawable())
     {
         auto copy_area_cookie = xcb_copy_area(context_.connection,
@@ -683,10 +881,10 @@ void graphic::draw_graphic(rect position, graphic &graphic_, int32_t left_shift,
             pc.get_gc(background_color),
             left_shift,
             top_shift,
-            position.left,
-            position.top,
-            position.right,
-            position.bottom);
+            destination.left,
+            destination.top,
+            destination.width(),
+            destination.height());
 
         if (!check_cookie(copy_area_cookie, context_.connection, err, "graphic::draw_graphic() xcb_copy_area"))
         {
@@ -716,6 +914,7 @@ void graphic::draw_surface(cairo_surface_t &surface_, rect position__)
     }
 
     auto cr = cairo_create(surface);
+    clip_cairo(cr, clip_);
 
     auto surface_width = cairo_image_surface_get_width(&surface_);
     auto surface_height = cairo_image_surface_get_height(&surface_);

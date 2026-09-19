@@ -65,6 +65,7 @@ static rect text_size(std::string_view text, const font& f)
     }
 }
 static CGRect cg_rect(rect r) { return CGRectMake(r.left, r.top, r.width(), r.height()); }
+static void apply_clip(CGContextRef c, rect clip_) { if (!clip_.is_null()) CGContextClipToRect(c, cg_rect(clip_)); }
 static void fill_color(CGContextRef c, color v) {
     CGContextSetRGBFillColor(c, get_red(v)/255.0, get_green(v)/255.0, get_blue(v)/255.0, get_alpha(v)/255.0);
 }
@@ -138,6 +139,7 @@ void graphic::draw_line(rect p, color c, uint32_t width)
     if (!mac_->context || !width) return;
     auto ctx=mac_->context;
     CGContextSaveGState(ctx);
+    apply_clip(ctx,clip_);
     stroke_color(ctx,c);
     CGContextSetLineWidth(ctx,width);
     CGContextBeginPath(ctx);
@@ -151,10 +153,13 @@ void graphic::draw_text(rect position, std::string_view text, color c, const fon
 {
     if (!mac_->context || text.empty()) return;
     @autoreleasepool {
+        CGContextSaveGState(mac_->context);
+        apply_clip(mac_->context,clip_);
         [NSGraphicsContext saveGraphicsState];
         NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithCGContext:mac_->context flipped:YES];
         [text_string(text) drawAtPoint:NSMakePoint(position.left,position.top) withAttributes:attributes(f,c)];
         [NSGraphicsContext restoreGraphicsState];
+        CGContextRestoreGState(mac_->context);
     }
 }
 void graphic::draw_rect(rect p, color c)
@@ -162,6 +167,7 @@ void graphic::draw_rect(rect p, color c)
     if (!mac_->context) return;
     auto ctx=mac_->context;
     CGContextSaveGState(ctx);
+    apply_clip(ctx,clip_);
     fill_color(ctx,c);
     CGContextFillRect(ctx,CGRectStandardize(cg_rect(p)));
     CGContextRestoreGState(ctx);
@@ -171,6 +177,7 @@ void graphic::draw_rect(rect p, color border, color fill, uint32_t width, uint32
     if (!mac_->context || p.width()<=0 || p.height()<=0) return;
     auto ctx=mac_->context;
     CGContextSaveGState(ctx);
+    apply_clip(ctx,clip_);
     CGRect bounds = CGRectInset(cg_rect(p),width/2.0,width/2.0);
     if (bounds.size.width>0 && bounds.size.height>0) {
         double r=std::min<double>(radius,std::min(bounds.size.width,bounds.size.height)/2);
@@ -189,6 +196,7 @@ void graphic::draw_native_image(void *image, rect p)
     if (!mac_->context || !image || p.width()<=0 || p.height()<=0) return;
     auto ctx=mac_->context;
     CGContextSaveGState(ctx);
+    apply_clip(ctx,clip_);
     CGContextTranslateCTM(ctx,p.left,p.bottom);
     CGContextScaleCTM(ctx,1,-1);
     CGContextDrawImage(ctx,CGRectMake(0,0,p.width(),p.height()),static_cast<CGImageRef>(image));

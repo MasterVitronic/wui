@@ -294,6 +294,10 @@ private:
 
     void send_mouse_event(mouse_event ev);
 
+    void draw_control(graphic &gr, rect paint_rect, std::shared_ptr<i_control> &control);
+
+    static bool control_contains(const std::shared_ptr<i_control> &control, int32_t x, int32_t y);
+
     bool check_control_here(int32_t x, int32_t y);
 
     void change_focus();

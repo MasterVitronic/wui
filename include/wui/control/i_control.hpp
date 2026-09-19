@@ -9,6 +9,7 @@
 #pragma once
 
 #include <wui/common/error.hpp>
+#include <wui/common/rect.hpp>
 
 #include <memory>
 #include <string>
@@ -43,6 +44,21 @@ public:
     virtual void hide() = 0;
     virtual bool showed() const = 0;
 
+    void set_clip(rect clip__)
+    {
+        clip_ = clip__;
+    }
+
+    void clear_clip()
+    {
+        clip_ = { 0, 0, 0, 0 };
+    }
+
+    rect clip() const
+    {
+        return clip_;
+    }
+
     virtual void enable() = 0;
     virtual void disable() = 0;
     virtual bool enabled() const = 0;
@@ -56,6 +72,9 @@ public:
 
 protected:
     ~i_control() {}
+
+private:
+    rect clip_{ 0, 0, 0, 0 };
 
 };
 
